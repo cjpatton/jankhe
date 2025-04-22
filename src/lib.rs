@@ -1,5 +1,7 @@
 use std::ops::{Add, Mul};
 
+mod ring;
+
 pub trait PubEnc {
     type PublicKey;
     type SecretKey;
