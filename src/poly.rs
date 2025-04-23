@@ -1,28 +1,70 @@
 #![allow(dead_code)] // XXX Remove me
 
+use bitvec::prelude::*;
 use lazy_static::lazy_static;
-use prio::field::{Field128, FieldElement};
-use std::ops::{Add, Mul};
+use prio::field::{Field128, FieldElement, FieldElementWithInteger};
+use rand::prelude::*;
+use std::{
+    array::from_fn,
+    ops::{Add, Mul, Neg},
+};
 
-// Polynomial ring for the ciphertext.
-//
-// NOTE: SEAL uses a composite modulus for the ciphertext. It recommends safe defaults based on the
-// size of the plaintext modulus. It also allows the user to choose the modulus themselves. For
-// now, we're hardcoding a prime modulus for which we know how to implement NTT.
-#[derive(Debug, PartialEq)]
-struct Cr<F: FieldElement, const D: usize>(pub(crate) [F; D]);
+/// Polynomial ring for the ciphertext.
+///
+/// NOTE: SEAL uses a composite modulus for the ciphertext. It recommends safe defaults based on the
+/// size of the plaintext modulus. It also allows the user to choose the modulus themselves. For
+/// now, we're hardcoding a prime modulus for which we know how to implement NTT.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cr<F: FieldElement, const D: usize>(pub(crate) [F; D]);
 
-impl<F: FieldElement, const D: usize> Add for Cr<F, D> {
-    type Output = Cr<F, D>;
-    fn add(self, _rhs: Self) -> Self::Output {
-        todo!()
+impl<F: FieldElement + FieldElementWithInteger, const D: usize> Cr<F, D> {
+    pub(crate) fn rand_long() -> Self {
+        // TODO Implement `Distribution<Cr<F,D>>` for `Standard` instead. This will require changes
+        // upstream in `prio`.
+        Self(prio::field::random_vector(D).try_into().unwrap())
+    }
+
+    /// Sample a polynomial with binomially distributed coefficients.
+    pub(crate) fn rand_short() -> Self {
+        const ETA: usize = 3;
+        const BYTES_BUF_SIZE: usize = 256;
+
+        let mut rng = thread_rng();
+        let bits_sampled = 2 * ETA * D;
+        let bytes_sampled = (bits_sampled + 7) / 8;
+        debug_assert!(bytes_sampled <= BYTES_BUF_SIZE);
+        let mut bytes = [0_u8; BYTES_BUF_SIZE];
+        rng.fill(&mut bytes[..bytes_sampled]);
+
+        let mut bits = bytes[..bytes_sampled].view_bits::<Msb0>().chunks(2);
+        let mut sample = || {
+            let chunk = bits.next().unwrap();
+            let value = chunk.load_be::<usize>();
+            F::from(F::Integer::try_from(value).unwrap())
+        };
+
+        Self(from_fn(|_| sample() - sample()))
     }
 }
 
-impl<F: FieldElement> Mul for Cr<F, 256> {
-    type Output = Cr<F, 256>;
-    fn mul(self, _rhs: Self) -> Self::Output {
-        todo!()
+impl<F: FieldElement, const D: usize> Add for &Cr<F, D> {
+    type Output = Cr<F, D>;
+    fn add(self, rhs: Self) -> Self::Output {
+        Cr(from_fn(|i| self.0[i] + rhs.0[i]))
+    }
+}
+
+impl Mul for &Cr<Field128, 256> {
+    type Output = Cr<Field128, 256>;
+    fn mul(self, rhs: Self) -> Self::Output {
+        POLY_MUL_FIELD_128.poly_mul(self, rhs)
+    }
+}
+
+impl<F: FieldElement, const D: usize> Neg for &Cr<F, D> {
+    type Output = Cr<F, D>;
+    fn neg(self) -> Self::Output {
+        Cr(from_fn(|i| -self.0[i]))
     }
 }
 
@@ -36,7 +78,7 @@ struct NttParamD256<F: FieldElement> {
 
 impl<F: FieldElement> NttParamD256<F> {
     /// Multiply two polynomials `a` and `b` from `F[X]/(X^256 + 1)`.
-    fn poly_mul(&self, Cr(a): Cr<F, 256>, Cr(b): Cr<F, 256>) -> Cr<F, 256> {
+    fn poly_mul(&self, Cr(a): &Cr<F, 256>, Cr(b): &Cr<F, 256>) -> Cr<F, 256> {
         fn level<F>(t: &[F], i: usize) -> &[F] {
             let level_start = (1 << i) - 1;
             let level_len = 1 << i;
@@ -46,8 +88,8 @@ impl<F: FieldElement> NttParamD256<F> {
         debug_assert_eq!(self.ts.len(), self.us.len());
 
         let (mut p, mut n) = (0, 1);
-        let mut ntt_a = [a, [F::zero(); 256]];
-        let mut ntt_b = [b, [F::zero(); 256]];
+        let mut ntt_a = [*a, [F::zero(); 256]];
+        let mut ntt_b = [*b, [F::zero(); 256]];
 
         for i in 0..self.num_levels {
             let t = level(&self.ts, i);
@@ -118,7 +160,7 @@ impl<F: FieldElement> NttParamD256<F> {
 /// This is the algorithm described in Section 4.1.1 of [Lyu24]. Matrix `m` is the transpose
 /// of the matrix on the left hand side of Equation (43).
 fn slow_poly_mul<F: FieldElement, const D: usize>(mut a: [F; D], b: [F; D], r: F) -> [F; D] {
-    let m: Mat<F, D, D> = Mat(std::array::from_fn(|_| {
+    let m: Mat<F, D, D> = Mat(from_fn(|_| {
         let row = a;
 
         // Multiply `a` by `X` and reduce.
@@ -226,7 +268,7 @@ mod tests {
             let a = Cr([Field128::from(0); 256]);
             let b = Cr([Field128::from(0); 256]);
             let r = Cr([Field128::from(0); 256]);
-            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(&a, &b));
         }
 
         {
@@ -234,7 +276,7 @@ mod tests {
             a.0[7] = Field128::from(23);
             let b = Cr([Field128::from(0); 256]);
             let r = Cr([Field128::from(0); 256]);
-            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(&a, &b));
         }
 
         {
@@ -244,7 +286,7 @@ mod tests {
             b.0[0] = Field128::from(1);
             let mut r = Cr([Field128::from(0); 256]);
             r.0[7] = Field128::from(23);
-            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(&a, &b));
         }
 
         {
@@ -254,7 +296,7 @@ mod tests {
             b.0[2] = Field128::from(1);
             let mut r = Cr([Field128::from(0); 256]);
             r.0[9] = Field128::from(23);
-            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(&a, &b));
         }
 
         {
@@ -264,7 +306,7 @@ mod tests {
             b.0[1] = Field128::from(1);
             let mut r = Cr([Field128::from(0); 256]);
             r.0[0] = -Field128::from(23);
-            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(&a, &b));
         }
     }
 }
