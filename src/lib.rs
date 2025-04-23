@@ -14,9 +14,16 @@ pub trait PubEnc {
 
 pub trait SomewahtHomomorphic: PubEnc
 where
-    Self::Ciphertext: Add + Mul,
+    Self::Ciphertext: Add,
     Self::Plaintext: Mul<Self::Ciphertext, Output = Self::Ciphertext>,
 {
+    // XXX I'm assuming pk has the relinearization key.
+    fn somewhat_mul(
+        &self,
+        pk: Self::PublicKey,
+        c1: Self::Ciphertext,
+        c2: Self::Ciphertext,
+    ) -> Self::Ciphertext;
 }
 
 pub struct Bfv;
@@ -57,6 +64,17 @@ impl Mul for BfvCiphertext {
 impl Mul<BfvCiphertext> for BfvPlaintext {
     type Output = BfvCiphertext;
     fn mul(self, _rhs: BfvCiphertext) -> Self::Output {
+        todo!()
+    }
+}
+
+impl SomewahtHomomorphic for Bfv {
+    fn somewhat_mul(
+        &self,
+        _pk: Self::PublicKey,
+        _c1: Self::Ciphertext,
+        _c2: Self::Ciphertext,
+    ) -> Self::Ciphertext {
         todo!()
     }
 }
