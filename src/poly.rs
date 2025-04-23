@@ -9,6 +9,7 @@ use std::ops::{Add, Mul};
 // NOTE: SEAL uses a composite modulus for the ciphertext. It recommends safe defaults based on the
 // size of the plaintext modulus. It also allows the user to choose the modulus themselves. For
 // now, we're hardcoding a prime modulus for which we know how to implement NTT.
+#[derive(Debug, PartialEq)]
 struct Cr<F: FieldElement, const D: usize>(pub(crate) [F; D]);
 
 impl<F: FieldElement, const D: usize> Add for Cr<F, D> {
@@ -27,25 +28,33 @@ impl<F: FieldElement> Mul for Cr<F, 256> {
 
 // XXX Generalize D
 struct NttParamD256<F: FieldElement> {
+    num_levels: usize,
     ts: [F; 127],
     us: [F; 127],
     c: F,
 }
 
 impl<F: FieldElement> NttParamD256<F> {
-    /* XXX
-    fn poly_mul(&self, a: Cr<F, 256>, b: Cr<F, 256>) -> Cr<F, 256> {
+    /// Multiply two polynomials `a` and `b` from `F[X]/(X^256 + 1)`.
+    fn poly_mul(&self, Cr(a): Cr<F, 256>, Cr(b): Cr<F, 256>) -> Cr<F, 256> {
+        fn level<F>(t: &[F], i: usize) -> &[F] {
+            let level_start = (1 << i) - 1;
+            let level_len = 1 << i;
+            &t[level_start..level_start + level_len]
+        }
+
         debug_assert_eq!(self.ts.len(), self.us.len());
 
         let (mut p, mut n) = (0, 1);
-        let mut ntt_a = [a, Cr([F::zero(); 256])];
-        let mut ntt_b = [b, Cr([F::zero(); 256])];
+        let mut ntt_a = [a, [F::zero(); 256]];
+        let mut ntt_b = [b, [F::zero(); 256]];
 
-        for (i, t) in self.ts.iter().enumerate() {
+        for i in 0..self.num_levels {
+            let t = level(&self.ts, i);
             let v = 1 << (8 - i); // width
             let w = v / 2; // split
             debug_assert_eq!(256 / v, t.len());
-            for (j, z) in (0..256).step_by(v).zip(t.iter().copied().map(Z)) {
+            for (j, z) in (0..256).step_by(v).zip(t.iter().copied()) {
                 for k in j..j + w {
                     // a
                     let y = z * ntt_a[p][k + w];
@@ -66,7 +75,7 @@ impl<F: FieldElement> NttParamD256<F> {
             let ntt_x: [_; 2] = slow_poly_mul(
                 ntt_a[p][range.clone()].try_into().unwrap(),
                 ntt_b[p][range.clone()].try_into().unwrap(),
-                Z(self.us[6][i]),
+                level(&self.us, self.num_levels - 1)[i],
             );
             ntt_a[n][range.clone()].copy_from_slice(&ntt_x);
 
@@ -74,17 +83,18 @@ impl<F: FieldElement> NttParamD256<F> {
             let ntt_x: [_; 2] = slow_poly_mul(
                 ntt_a[p][range.clone()].try_into().unwrap(),
                 ntt_b[p][range.clone()].try_into().unwrap(),
-                Z(self.ts[6][i]),
+                level(&self.ts, self.num_levels - 1)[i],
             );
             ntt_a[n][range.clone()].copy_from_slice(&ntt_x);
         }
         (p, n) = (1 - p, 1 - n);
 
-        for (i, u) in self.us.iter().enumerate().rev() {
+        for i in (0..self.num_levels).rev() {
+            let u = level(&self.us, i);
             let v = 1 << (8 - i); // width
             let w = v / 2; // split
             debug_assert_eq!(256 / v, u.len());
-            for (j, z) in (0..256).step_by(v).zip(u.iter().copied().map(Z).rev()) {
+            for (j, z) in (0..256).step_by(v).zip(u.iter().copied().rev()) {
                 for k in j..j + w {
                     // a
                     ntt_a[n][k] = ntt_a[p][k] + ntt_a[p][k + w];
@@ -99,25 +109,181 @@ impl<F: FieldElement> NttParamD256<F> {
             ntt_a[p][i] *= self.c;
         }
 
-        ntt_a[p]
+        Cr(ntt_a[p])
     }
-    */
+}
+
+/// Multiply two polynomials `a` and `b` from `F[X]/(X^D + r)`.
+///
+/// This is the algorithm described in Section 4.1.1 of [Lyu24]. Matrix `m` is the transpose
+/// of the matrix on the left hand side of Equation (43).
+fn slow_poly_mul<F: FieldElement, const D: usize>(mut a: [F; D], b: [F; D], r: F) -> [F; D] {
+    let m: Mat<F, D, D> = Mat(std::array::from_fn(|_| {
+        let row = a;
+
+        // Multiply `a` by `X` and reduce.
+        //
+        // Let `c` be the leading coefficient of `a`.
+        let c = a[D - 1];
+
+        // Multiply `a` by `X` in place by shifting everything over.
+        for j in (1..D).rev() {
+            a[j] = a[j - 1];
+        }
+
+        // Clear the first coefficient of `a` to complete the shift and subtract `c * F(X)` from `a`.
+        a[0] = r * -c;
+
+        row
+    }));
+
+    (&Mat([b]) * &m).0[0]
+}
+
+struct Mat<F, const ROWS: usize, const COLS: usize>([[F; COLS]; ROWS]);
+
+impl<F: FieldElement, const I: usize, const J: usize, const K: usize> Mul<&Mat<F, J, K>>
+    for &Mat<F, I, J>
+{
+    type Output = Mat<F, I, K>;
+    fn mul(self, rhs: &Mat<F, J, K>) -> Mat<F, I, K> {
+        let mut out = [[F::zero(); K]; I];
+        for i in 0..I {
+            for j in 0..J {
+                for k in 0..K {
+                    out[i][k] += self.0[i][j] * rhs.0[j][k];
+                }
+            }
+        }
+        Mat(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_slow_poly_mul() {
+        assert_eq!(
+            [Field128::from(0), Field128::from(0)],
+            slow_poly_mul(
+                [Field128::from(99), Field128::from(99)],
+                [Field128::from(0), Field128::from(0)],
+                Field128::one(),
+            )
+        );
+
+        assert_eq!(
+            [Field128::from(1), Field128::from(0)],
+            slow_poly_mul(
+                [Field128::from(1), Field128::from(0)],
+                [Field128::from(1), Field128::from(0)],
+                Field128::one(),
+            )
+        );
+
+        assert_eq!(
+            [Field128::from(0), Field128::from(1)],
+            slow_poly_mul(
+                [Field128::from(1), Field128::from(0)],
+                [Field128::from(0), Field128::from(1)],
+                Field128::one(),
+            )
+        );
+
+        assert_eq!(
+            [Field128::from(0), Field128::from(6)],
+            slow_poly_mul(
+                [Field128::from(2), Field128::from(0)],
+                [Field128::from(0), Field128::from(3)],
+                Field128::one(),
+            )
+        );
+
+        assert_eq!(
+            [-Field128::from(6), Field128::from(0)],
+            slow_poly_mul(
+                [Field128::from(0), Field128::from(2)],
+                [Field128::from(0), Field128::from(3)],
+                Field128::one(),
+            )
+        );
+
+        assert_eq!(
+            [-Field128::from(12), Field128::from(0)],
+            slow_poly_mul(
+                [Field128::from(0), Field128::from(2)],
+                [Field128::from(0), Field128::from(3)],
+                Field128::from(2),
+            )
+        );
+    }
+
+    #[test]
+    fn test_ntt_poly_mol() {
+        {
+            let a = Cr([Field128::from(0); 256]);
+            let b = Cr([Field128::from(0); 256]);
+            let r = Cr([Field128::from(0); 256]);
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+        }
+
+        {
+            let mut a = Cr([Field128::from(0); 256]);
+            a.0[7] = Field128::from(23);
+            let b = Cr([Field128::from(0); 256]);
+            let r = Cr([Field128::from(0); 256]);
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+        }
+
+        {
+            let mut a = Cr([Field128::from(0); 256]);
+            a.0[7] = Field128::from(23);
+            let mut b = Cr([Field128::from(0); 256]);
+            b.0[0] = Field128::from(1);
+            let mut r = Cr([Field128::from(0); 256]);
+            r.0[7] = Field128::from(23);
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+        }
+
+        {
+            let mut a = Cr([Field128::from(0); 256]);
+            a.0[7] = Field128::from(23);
+            let mut b = Cr([Field128::from(0); 256]);
+            b.0[2] = Field128::from(1);
+            let mut r = Cr([Field128::from(0); 256]);
+            r.0[9] = Field128::from(23);
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+        }
+
+        {
+            let mut a = Cr([Field128::from(0); 256]);
+            a.0[255] = Field128::from(23);
+            let mut b = Cr([Field128::from(0); 256]);
+            b.0[1] = Field128::from(1);
+            let mut r = Cr([Field128::from(0); 256]);
+            r.0[0] = -Field128::from(23);
+            assert_eq!(r, POLY_MUL_FIELD_128.poly_mul(a, b));
+        }
+    }
 }
 
 lazy_static! {
     static ref POLY_MUL_FIELD_128: NttParamD256<Field128> = NttParamD256 {
+        num_levels: 7,
         ts: [
-            // layer 0
+            // level 0
             Field128::from(43482856138516670506292376531135147170),
-            // layer 1
+            // level 1
             Field128::from(200810852397338366995356413323740658916),
             Field128::from(318105318622626656116822425073164958506),
-            // layer 2
+            // level 2
             Field128::from(62304660289062950672806460965150310637),
             Field128::from(133199926836900963745501693426240858618),
             Field128::from(227101476958844824561225924334879330359),
             Field128::from(145297613515289394570967514889626843620),
-            // layer 3
+            // level 3
             Field128::from(175514189579196055294699063096378878741),
             Field128::from(193241761787407685671448823696396603028),
             Field128::from(3223362179881897295227655658778263782),
@@ -126,7 +292,7 @@ lazy_static! {
             Field128::from(307956641479908342626109376394091522974),
             Field128::from(220514489592186641893040849599624056427),
             Field128::from(66744898958981417258026933589281269838),
-            // layer 4
+            // level 4
             Field128::from(269190794366931664401273698877920593800),
             Field128::from(251829672794901955881440267550020778066),
             Field128::from(37520094761489950374065048257728074633),
@@ -143,7 +309,7 @@ lazy_static! {
             Field128::from(284622066638003875853256413067936714441),
             Field128::from(164118169684073674497830130095400509465),
             Field128::from(70540665634008446339933661952879097528),
-            // layer 5
+            // level 5
             Field128::from(151959974497288354769135760032128419854),
             Field128::from(190443686694029988148898454026969178891),
             Field128::from(232035515901792875916444659018678903449),
@@ -176,7 +342,7 @@ lazy_static! {
             Field128::from(326454839187362594980604966220520881005),
             Field128::from(292434311472248662242922010064360782556),
             Field128::from(303892309822896297917577954255934761642),
-            // layer 6
+            // level 6
             Field128::from(143141298024093847701129645446100165914),
             Field128::from(13920092502624681902843427268694720857),
             Field128::from(67959010433230547290700909527930504241),
@@ -243,17 +409,17 @@ lazy_static! {
             Field128::from(210966142916779246805155704093159082429),
         ],
         us: [
-            // layer 0
+            // level 0
             Field128::from(296799510782421792440573396836765619039),
-            // layer 1
+            // level 1
             Field128::from(139471514523600095951509360044160107293),
             Field128::from(22177048298311806830043348294735807703),
-            // layer 2
+            // level 2
             Field128::from(277977706631875512274059312402750455572),
             Field128::from(207082440084037499201364079941659907591),
             Field128::from(113180889962093638385639849033021435850),
             Field128::from(194984753405649068375898258478273922589),
-            // layer 3
+            // level 3
             Field128::from(164768177341742407652166710271521887468),
             Field128::from(147040605133530777275416949671504163181),
             Field128::from(337059004741056565651638117709122502427),
@@ -262,7 +428,7 @@ lazy_static! {
             Field128::from(32325725441030120320756396973809243235),
             Field128::from(119767877328751821053824923768276709782),
             Field128::from(273537467961957045688838839778619496371),
-            // layer 4
+            // level 4
             Field128::from(71091572554006798545592074489980172409),
             Field128::from(88452694126036507065425505817879988143),
             Field128::from(302762272159448512572800725110172691576),
@@ -279,7 +445,7 @@ lazy_static! {
             Field128::from(55660300282934587093609360299964051768),
             Field128::from(176164197236864788449035643272500256744),
             Field128::from(269741701286930016606932111415021668681),
-            // layer 5
+            // level 5
             Field128::from(188322392423650108177730013335772346355),
             Field128::from(149838680226908474797967319340931587318),
             Field128::from(108246851019145587030421114349221862760),
@@ -312,7 +478,7 @@ lazy_static! {
             Field128::from(13827527733575867966260807147379885204),
             Field128::from(47848055448689800703943763303539983653),
             Field128::from(36390057098042165029287819111966004567),
-            // layer 6
+            // level 6
             Field128::from(197141068896844615245736127921800600295),
             Field128::from(326362274418313781044022346099206045352),
             Field128::from(272323356487707915656164863839970261968),

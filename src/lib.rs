@@ -1,6 +1,6 @@
 use std::ops::{Add, Mul};
 
-mod ring;
+mod poly;
 
 pub trait PubEnc {
     type PublicKey;
