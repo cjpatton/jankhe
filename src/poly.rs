@@ -31,7 +31,7 @@ impl<F: FieldElement + FieldElementWithInteger, const D: usize> Rq<F, D> {
 
         let mut rng = thread_rng();
         let bits_sampled = 2 * ETA * D;
-        let bytes_sampled = (bits_sampled + 7) / 8;
+        let bytes_sampled = bits_sampled.div_ceil(8);
         debug_assert!(bytes_sampled <= BYTES_BUF_SIZE);
         let mut bytes = [0_u8; BYTES_BUF_SIZE];
         rng.fill(&mut bytes[..bytes_sampled]);
@@ -58,6 +58,13 @@ impl Mul for &Rq<Field128, 256> {
     type Output = Rq<Field128, 256>;
     fn mul(self, rhs: Self) -> Self::Output {
         POLY_MUL_FIELD128.poly_mul(self, rhs)
+    }
+}
+
+impl Mul for &Rq<FieldPrio2, 256> {
+    type Output = Rq<FieldPrio2, 256>;
+    fn mul(self, rhs: Self) -> Self::Output {
+        POLY_MUL_FIELD32.poly_mul(self, rhs)
     }
 }
 
@@ -184,6 +191,7 @@ fn slow_poly_mul<F: FieldElement, const D: usize>(mut a: [F; D], b: [F; D], r: F
 
 struct Mat<F, const ROWS: usize, const COLS: usize>([[F; COLS]; ROWS]);
 
+#[allow(clippy::needless_range_loop)]
 impl<F: FieldElement, const I: usize, const J: usize, const K: usize> Mul<&Mat<F, J, K>>
     for &Mat<F, I, J>
 {

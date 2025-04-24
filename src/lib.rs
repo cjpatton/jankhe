@@ -2,7 +2,7 @@ use num_bigint::{BigInt, ToBigInt};
 use prio::field::{Field128, FieldElementWithInteger, FieldPrio2};
 use std::{
     array::from_fn,
-    ops::{Add, Deref, Mul},
+    ops::{Add, Mul},
 };
 
 use crate::poly::Rq;
@@ -21,8 +21,10 @@ pub trait PubEnc {
 
 pub trait SomewahtHomomorphic: PubEnc
 where
-    Self::Ciphertext: Add,
-    Self::Plaintext: Mul<Self::Ciphertext, Output = Self::Ciphertext>,
+    for<'a> &'a Self::Plaintext: Add<Output = Self::Plaintext>,
+    for<'a> &'a Self::Plaintext: Mul<Output = Self::Plaintext>,
+    for<'a> &'a Self::Ciphertext: Add<Output = Self::Ciphertext>,
+    for<'a> &'a Self::Plaintext: Mul<&'a Self::Ciphertext, Output = Self::Ciphertext>,
 {
     // XXX I'm assuming pk has the relinearization key.
     fn somewhat_mul(
@@ -40,8 +42,8 @@ pub struct Bfv {
     delta: Field128,
 }
 
-impl Bfv {
-    pub fn new() -> Self {
+impl Default for Bfv {
+    fn default() -> Self {
         let plaintext_modulus = u128::from(FieldPrio2::modulus());
         let delta = Field128::modulus() / plaintext_modulus;
         Self {
@@ -96,44 +98,48 @@ impl PubEnc for Bfv {
             m *= &self.plaintext_modulus;
             m += &self.ciphertext_modulus >> 1;
             m /= &self.ciphertext_modulus;
-            m %= &self.plaintext_modulus;
             let m = u32::try_from(m).unwrap();
-            let m = FieldPrio2::from(m);
-            m
+            FieldPrio2::from(m)
         })))
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BfvPlaintext(Rq<FieldPrio2, 256>); // XXX Avoid hardcoding D
 
+#[derive(Debug)]
 pub struct BfvCiphertext([Rq<Field128, 256>; 2]);
 
-impl Add for BfvPlaintext {
+impl Add for &BfvPlaintext {
     type Output = BfvPlaintext;
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(&self.0 + &rhs.0)
+    fn add(self, rhs: Self) -> BfvPlaintext {
+        BfvPlaintext(&self.0 + &rhs.0)
     }
 }
 
-impl Add for BfvCiphertext {
+impl Mul for &BfvPlaintext {
+    type Output = BfvPlaintext;
+    fn mul(self, rhs: Self) -> BfvPlaintext {
+        BfvPlaintext(&self.0 * &rhs.0)
+    }
+}
+
+impl Add for &BfvCiphertext {
     type Output = BfvCiphertext;
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(from_fn(|i| &self.0[i] + &rhs.0[i]))
+    fn add(self, rhs: Self) -> BfvCiphertext {
+        BfvCiphertext(from_fn(|j| &self.0[j] + &rhs.0[j]))
     }
 }
 
-impl Mul<BfvCiphertext> for BfvPlaintext {
+impl Mul<&BfvCiphertext> for &BfvPlaintext {
     type Output = BfvCiphertext;
-    fn mul(self, _rhs: BfvCiphertext) -> Self::Output {
-        todo!()
-    }
-}
-
-impl Deref for BfvPlaintext {
-    type Target = Rq<FieldPrio2, 256>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    fn mul(self, BfvCiphertext(rhs): &BfvCiphertext) -> BfvCiphertext {
+        let s = Rq(from_fn(|i| {
+            let s = u32::from(self.0.0[i]);
+            let s = u128::from(s);
+            Field128::from(s)
+        }));
+        BfvCiphertext(from_fn(|j| &s * &rhs[j]))
     }
 }
 
@@ -171,21 +177,33 @@ mod tests {
 
     #[test]
     fn test_pub_enc() {
-        let bfv = Bfv::new();
+        let bfv = Bfv::default();
         let m = random_plaintext();
         roundtrip_test(&bfv, &m);
     }
 
     #[test]
     fn homomorphic_add() {
-        let bfv = Bfv::new();
+        let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
         let m1 = random_plaintext();
         let m2 = random_plaintext();
         let c1 = bfv.encrypt(&pk, &m1);
         let c2 = bfv.encrypt(&pk, &m2);
-        let got = bfv.decrypt(&sk, &(c1 + c2));
-        let want = m1 + m2;
+        let got = bfv.decrypt(&sk, &(&c1 + &c2));
+        let want = &m1 + &m2;
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn homomorphic_scalar_mul() {
+        let bfv = Bfv::default();
+        let (pk, sk) = bfv.key_gen();
+        let s = random_plaintext();
+        let m = random_plaintext();
+        let c = bfv.encrypt(&pk, &m);
+        let got = bfv.decrypt(&sk, &(&s * &c));
+        let want = &s * &m;
         assert_eq!(got, want);
     }
 }
