@@ -1,5 +1,3 @@
-#![allow(dead_code)] // XXX Remove me
-
 use bitvec::prelude::*;
 use lazy_static::lazy_static;
 use prio::field::{Field128, FieldElement, FieldElementWithInteger, FieldPrio2};
@@ -18,13 +16,15 @@ use std::{
 pub struct Rq<F: FieldElement, const D: usize>(pub(crate) [F; D]);
 
 impl<F: FieldElement + FieldElementWithInteger, const D: usize> Rq<F, D> {
+    // TODO Implement `Distribution<Rq<F,D>>` for `Standard` instead. This will require changes
+    // upstream in `prio`.
     pub(crate) fn rand_long() -> Self {
-        // TODO Implement `Distribution<Rq<F,D>>` for `Standard` instead. This will require changes
-        // upstream in `prio`.
         Self(prio::field::random_vector(D).try_into().unwrap())
     }
 
     /// Sample a polynomial with binomially distributed coefficients.
+    //
+    // TODO Pass an `Rng` here.
     pub(crate) fn rand_short() -> Self {
         const ETA: usize = 3;
         const BYTES_BUF_SIZE: usize = 256;

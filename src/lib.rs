@@ -186,24 +186,28 @@ mod tests {
     fn homomorphic_add() {
         let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
+
         let m1 = random_plaintext();
         let m2 = random_plaintext();
+        let want = &m1 + &m2;
+
         let c1 = bfv.encrypt(&pk, &m1);
         let c2 = bfv.encrypt(&pk, &m2);
         let got = bfv.decrypt(&sk, &(&c1 + &c2));
-        let want = &m1 + &m2;
         assert_eq!(got, want);
     }
 
     #[test]
-    fn homomorphic_scalar_mul() {
+    fn homomorphic_plain_poly_mul() {
         let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
+
         let s = random_plaintext();
         let m = random_plaintext();
+        let want = &s * &m;
+
         let c = bfv.encrypt(&pk, &m);
         let got = bfv.decrypt(&sk, &(&s * &c));
-        let want = &s * &m;
         assert_eq!(got, want);
     }
 }
