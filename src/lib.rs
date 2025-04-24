@@ -2,7 +2,7 @@ use num_bigint::{BigInt, ToBigInt};
 use prio::field::{Field128, FieldElementWithInteger, FieldPrio2};
 use std::{
     array::from_fn,
-    ops::{Add, Mul},
+    ops::{Add, Deref, Mul},
 };
 
 use crate::poly::Rq;
@@ -41,8 +41,8 @@ pub struct Bfv {
 }
 
 impl Bfv {
-    pub fn new(plaintext_modulus: u32) -> Self {
-        let plaintext_modulus = u128::from(plaintext_modulus);
+    pub fn new() -> Self {
+        let plaintext_modulus = u128::from(FieldPrio2::modulus());
         let delta = Field128::modulus() / plaintext_modulus;
         Self {
             plaintext_modulus: plaintext_modulus.to_bigint().unwrap(), // always succeeds on u128
@@ -109,10 +109,17 @@ pub struct BfvPlaintext(Rq<FieldPrio2, 256>); // XXX Avoid hardcoding D
 
 pub struct BfvCiphertext([Rq<Field128, 256>; 2]);
 
-impl Add for BfvCiphertext {
+impl Add for BfvPlaintext {
     type Output = BfvPlaintext;
-    fn add(self, _rhs: Self) -> Self::Output {
-        todo!()
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(&self.0 + &rhs.0)
+    }
+}
+
+impl Add for BfvCiphertext {
+    type Output = BfvCiphertext;
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(from_fn(|i| &self.0[i] + &rhs.0[i]))
     }
 }
 
@@ -120,6 +127,13 @@ impl Mul<BfvCiphertext> for BfvPlaintext {
     type Output = BfvCiphertext;
     fn mul(self, _rhs: BfvCiphertext) -> Self::Output {
         todo!()
+    }
+}
+
+impl Deref for BfvPlaintext {
+    type Target = Rq<FieldPrio2, 256>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -142,6 +156,10 @@ mod tests {
 
     use super::*;
 
+    fn random_plaintext() -> BfvPlaintext {
+        BfvPlaintext(Rq(random_vector::<FieldPrio2>(256).try_into().unwrap()))
+    }
+
     fn roundtrip_test<P>(pub_enc: &P, m: &P::Plaintext)
     where
         P: PubEnc,
@@ -153,8 +171,21 @@ mod tests {
 
     #[test]
     fn test_pub_enc() {
-        let pub_enc = Bfv::new(u32::from(FieldPrio2::modulus()));
-        let m = BfvPlaintext(Rq(random_vector::<FieldPrio2>(256).try_into().unwrap()));
-        roundtrip_test(&pub_enc, &m);
+        let bfv = Bfv::new();
+        let m = random_plaintext();
+        roundtrip_test(&bfv, &m);
+    }
+
+    #[test]
+    fn homomorphic_add() {
+        let bfv = Bfv::new();
+        let (pk, sk) = bfv.key_gen();
+        let m1 = random_plaintext();
+        let m2 = random_plaintext();
+        let c1 = bfv.encrypt(&pk, &m1);
+        let c2 = bfv.encrypt(&pk, &m2);
+        let got = bfv.decrypt(&sk, &(c1 + c2));
+        let want = m1 + m2;
+        assert_eq!(got, want);
     }
 }
