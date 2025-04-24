@@ -1,5 +1,5 @@
 use num_bigint::{BigInt, ToBigInt};
-use prio::field::{Field128, FieldElementWithInteger};
+use prio::field::{Field128, FieldElementWithInteger, FieldPrio2};
 use std::{
     array::from_fn,
     ops::{Add, Mul},
@@ -37,24 +37,20 @@ where
 pub struct Bfv {
     plaintext_modulus: BigInt,
     ciphertext_modulus: BigInt,
-    delta: u128,
+    delta: Field128,
 }
 
 impl Bfv {
-    pub fn new(plaintext_modulus: u64) -> Self {
+    pub fn new(plaintext_modulus: u32) -> Self {
         let plaintext_modulus = u128::from(plaintext_modulus);
         let delta = Field128::modulus() / plaintext_modulus;
         Self {
             plaintext_modulus: plaintext_modulus.to_bigint().unwrap(), // always succeeds on u128
             ciphertext_modulus: Field128::modulus().to_bigint().unwrap(),
-            delta,
+            delta: Field128::from(delta),
         }
     }
 }
-
-#[derive(Debug, PartialEq)]
-pub struct BfvPlaintext([u64; 256]); // XXX Avoid hardcoding D
-pub struct BfvCiphertext([Rq<Field128, 256>; 2]);
 
 impl PubEnc for Bfv {
     type PublicKey = [Rq<Field128, 256>; 2];
@@ -73,10 +69,13 @@ impl PubEnc for Bfv {
     fn encrypt(
         &self,
         [p0, p1]: &Self::PublicKey,
-        BfvPlaintext(m): &Self::Plaintext,
+        BfvPlaintext(Rq(m)): &Self::Plaintext,
     ) -> Self::Ciphertext {
         let m = Rq(from_fn(|i| {
-            Field128::from(u128::from(m[i]).checked_mul(self.delta).expect("XXX"))
+            let m = u32::from(m[i]);
+            let m = u128::from(m);
+            let m = Field128::from(m);
+            m * self.delta
         }));
         let u = Rq::rand_short();
         let e0 = Rq::rand_short();
@@ -92,16 +91,23 @@ impl PubEnc for Bfv {
         BfvCiphertext([c0, c1]): &Self::Ciphertext,
     ) -> Self::Plaintext {
         let Rq(m) = c0 + &(c1 * s);
-        BfvPlaintext(from_fn(|i| {
+        BfvPlaintext(Rq(from_fn(|i| {
             let mut m = u128::from(m[i]).to_bigint().unwrap(); // always succeeds on u128
             m *= &self.plaintext_modulus;
             m += &self.ciphertext_modulus >> 1;
             m /= &self.ciphertext_modulus;
             m %= &self.plaintext_modulus;
-            m.try_into().unwrap()
-        }))
+            let m = u32::try_from(m).unwrap();
+            let m = FieldPrio2::from(m);
+            m
+        })))
     }
 }
+
+#[derive(Debug, PartialEq)]
+pub struct BfvPlaintext(Rq<FieldPrio2, 256>); // XXX Avoid hardcoding D
+
+pub struct BfvCiphertext([Rq<Field128, 256>; 2]);
 
 impl Add for BfvCiphertext {
     type Output = BfvPlaintext;
@@ -132,7 +138,7 @@ impl SomewahtHomomorphic for Bfv {
 mod tests {
     use std::fmt::Debug;
 
-    use prio::field::{Field64, FieldPrio2, random_vector};
+    use prio::field::{FieldPrio2, random_vector};
 
     use super::*;
 
@@ -147,14 +153,8 @@ mod tests {
 
     #[test]
     fn test_pub_enc() {
-        let pub_enc = Bfv::new(u64::from(FieldPrio2::modulus()));
-        let m = random_vector::<FieldPrio2>(256)
-            .into_iter()
-            .map(u32::from)
-            .map(u64::from)
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap();
-        roundtrip_test(&pub_enc, &BfvPlaintext(m));
+        let pub_enc = Bfv::new(u32::from(FieldPrio2::modulus()));
+        let m = BfvPlaintext(Rq(random_vector::<FieldPrio2>(256).try_into().unwrap()));
+        roundtrip_test(&pub_enc, &m);
     }
 }
