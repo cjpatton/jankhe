@@ -24,15 +24,28 @@ where
     for<'a> &'a Self::Plaintext: Add<Output = Self::Plaintext>,
     for<'a> &'a Self::Plaintext: Mul<Output = Self::Plaintext>,
     for<'a> &'a Self::Ciphertext: Add<Output = Self::Ciphertext>,
-    for<'a> &'a Self::Plaintext: Mul<&'a Self::Ciphertext, Output = Self::Ciphertext>,
 {
+    /// Multiply ciphertexts `c1` and `c2`. This operation depends on the public key for
+    /// relinearization. The result contains a significant amount of error that can only be removed
+    /// by boostrapping.
+    //
     // XXX I'm assuming pk has the relinearization key.
     fn somewhat_mul(
         &self,
-        pk: Self::PublicKey,
-        c1: Self::Ciphertext,
-        c2: Self::Ciphertext,
+        pk: &Self::PublicKey,
+        c1: &Self::Ciphertext,
+        c2: &Self::Ciphertext,
     ) -> Self::Ciphertext;
+
+    /// Multiply a ciphertext `c` by a plaintext polynomial `m`.
+    fn plain_poly_mul(&self, m: &Self::Plaintext, c: &Self::Ciphertext) -> Self::Ciphertext;
+
+    /// Multiply a cipheretxt `c` by a plaintext polynomial `m` element-wise. That is, the `i`th
+    /// coefficient of the output is equal to `c[i]*m[i]` where `c[i]` is the `i`th coefficient of
+    /// `c` (likewise for `m[i]`).
+    //
+    // XXX Is this a good name for this?
+    fn plain_conv_mul(&self, m: &Self::Plaintext, c: &Self::Ciphertext) -> Self::Ciphertext;
 }
 
 #[derive(Debug)]
@@ -54,6 +67,7 @@ impl Default for Bfv {
     }
 }
 
+// Implement Optimization/Assumption 1 from [BFV12].
 impl PubEnc for Bfv {
     type PublicKey = [Rq<Field128, 256>; 2];
     type SecretKey = Rq<Field128, 256>;
@@ -131,26 +145,40 @@ impl Add for &BfvCiphertext {
     }
 }
 
-impl Mul<&BfvCiphertext> for &BfvPlaintext {
-    type Output = BfvCiphertext;
-    fn mul(self, BfvCiphertext(rhs): &BfvCiphertext) -> BfvCiphertext {
-        let s = Rq(from_fn(|i| {
-            let s = u32::from(self.0.0[i]);
-            let s = u128::from(s);
-            Field128::from(s)
-        }));
-        BfvCiphertext(from_fn(|j| &s * &rhs[j]))
-    }
-}
-
 impl SomewahtHomomorphic for Bfv {
     fn somewhat_mul(
         &self,
-        _pk: Self::PublicKey,
-        _c1: Self::Ciphertext,
-        _c2: Self::Ciphertext,
+        _pk: &Self::PublicKey,
+        _c1: &Self::Ciphertext,
+        _c2: &Self::Ciphertext,
     ) -> Self::Ciphertext {
         todo!()
+    }
+
+    fn plain_poly_mul(
+        &self,
+        BfvPlaintext(Rq(m)): &BfvPlaintext,
+        BfvCiphertext(c): &BfvCiphertext,
+    ) -> BfvCiphertext {
+        let m = Rq(from_fn(|i| {
+            let m = u32::from(m[i]);
+            let m = u128::from(m);
+            Field128::from(m)
+        }));
+        BfvCiphertext(from_fn(|j| &m * &c[j]))
+    }
+
+    fn plain_conv_mul(
+        &self,
+        BfvPlaintext(Rq(m)): &Self::Plaintext,
+        BfvCiphertext(c): &BfvCiphertext,
+    ) -> Self::Ciphertext {
+        let m: [_; 256] = from_fn(|i| {
+            let m = u32::from(m[i]);
+            let m = u128::from(m);
+            Field128::from(m)
+        });
+        BfvCiphertext(from_fn(|j| Rq(from_fn(|i| m[i] * c[j].0[i]))))
     }
 }
 
@@ -161,10 +189,6 @@ mod tests {
     use prio::field::{FieldPrio2, random_vector};
 
     use super::*;
-
-    fn random_plaintext() -> BfvPlaintext {
-        BfvPlaintext(Rq(random_vector::<FieldPrio2>(256).try_into().unwrap()))
-    }
 
     fn roundtrip_test<P>(pub_enc: &P, m: &P::Plaintext)
     where
@@ -178,7 +202,7 @@ mod tests {
     #[test]
     fn test_pub_enc() {
         let bfv = Bfv::default();
-        let m = random_plaintext();
+        let m = BfvPlaintext(Rq::rand_long());
         roundtrip_test(&bfv, &m);
     }
 
@@ -187,8 +211,8 @@ mod tests {
         let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
 
-        let m1 = random_plaintext();
-        let m2 = random_plaintext();
+        let m1 = BfvPlaintext(Rq::rand_long());
+        let m2 = BfvPlaintext(Rq::rand_long());
         let want = &m1 + &m2;
 
         let c1 = bfv.encrypt(&pk, &m1);
@@ -202,12 +226,31 @@ mod tests {
         let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
 
-        let s = random_plaintext();
-        let m = random_plaintext();
+        let s = BfvPlaintext(Rq::rand_long());
+        let m = BfvPlaintext(Rq::rand_long());
         let want = &s * &m;
 
         let c = bfv.encrypt(&pk, &m);
-        let got = bfv.decrypt(&sk, &(&s * &c));
+        let got = bfv.decrypt(&sk, &bfv.plain_poly_mul(&s, &c));
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn homomorphic_plain_conv_mul() {
+        let bfv = Bfv::default();
+        let (pk, sk) = bfv.key_gen();
+
+        let s = BfvPlaintext(Rq([random_vector(1)[0]; 256]));
+        // XXX None of the following work!
+        //
+        //let s = BfvPlaintext(Rq::rand_long());
+        //let s = BfvPlaintext(Rq::rand_short());
+        //s.0.0[23] = 23.into();
+        let m = BfvPlaintext(Rq::rand_long());
+        let want = BfvPlaintext(Rq(from_fn(|i| s.0.0[i] * m.0.0[i])));
+
+        let c = bfv.encrypt(&pk, &m);
+        let got = bfv.decrypt(&sk, &bfv.plain_conv_mul(&s, &c));
         assert_eq!(got, want);
     }
 }
