@@ -23,6 +23,7 @@ pub trait SomewahtHomomorphic: PubEnc
 where
     for<'a> &'a Self::Plaintext: Add<Output = Self::Plaintext>,
     for<'a> &'a Self::Plaintext: Mul<Output = Self::Plaintext>,
+    for<'a> &'a Self::Plaintext: Mul<&'a Self::Ciphertext, Output = Self::Ciphertext>,
     for<'a> &'a Self::Ciphertext: Add<Output = Self::Ciphertext>,
 {
     /// Multiply ciphertexts `c1` and `c2`. This operation depends on the public key for
@@ -36,16 +37,6 @@ where
         c1: &Self::Ciphertext,
         c2: &Self::Ciphertext,
     ) -> Self::Ciphertext;
-
-    /// Multiply a ciphertext `c` by a plaintext polynomial `m`.
-    fn plain_poly_mul(&self, m: &Self::Plaintext, c: &Self::Ciphertext) -> Self::Ciphertext;
-
-    /// Multiply a cipheretxt `c` by a plaintext polynomial `m` element-wise. That is, the `i`th
-    /// coefficient of the output is equal to `c[i]*m[i]` where `c[i]` is the `i`th coefficient of
-    /// `c` (likewise for `m[i]`).
-    //
-    // XXX Is this a good name for this?
-    fn plain_conv_mul(&self, m: &Self::Plaintext, c: &Self::Ciphertext) -> Self::Ciphertext;
 }
 
 #[derive(Debug)]
@@ -53,6 +44,23 @@ pub struct Bfv {
     plaintext_modulus: BigInt,
     ciphertext_modulus: BigInt,
     delta: Field128,
+}
+
+impl Bfv {
+    // XXX This doesn't work!
+    #[cfg(test)]
+    fn plain_conv_mul(
+        &self,
+        BfvPlaintext(Rq(m)): &BfvPlaintext,
+        BfvCiphertext(c): &BfvCiphertext,
+    ) -> BfvCiphertext {
+        let m: [_; 256] = from_fn(|i| {
+            let m = u32::from(m[i]);
+            let m = u128::from(m);
+            Field128::from(m)
+        });
+        BfvCiphertext(from_fn(|j| Rq(from_fn(|i| m[i] * c[j].0[i]))))
+    }
 }
 
 impl Default for Bfv {
@@ -145,6 +153,18 @@ impl Add for &BfvCiphertext {
     }
 }
 
+impl Mul<&BfvCiphertext> for &BfvPlaintext {
+    type Output = BfvCiphertext;
+    fn mul(self, BfvCiphertext(c): &BfvCiphertext) -> BfvCiphertext {
+        let m = Rq(from_fn(|i| {
+            let m = u32::from(self.0.0[i]);
+            let m = u128::from(m);
+            Field128::from(m)
+        }));
+        BfvCiphertext(from_fn(|j| &m * &c[j]))
+    }
+}
+
 impl SomewahtHomomorphic for Bfv {
     fn somewhat_mul(
         &self,
@@ -154,39 +174,13 @@ impl SomewahtHomomorphic for Bfv {
     ) -> Self::Ciphertext {
         todo!()
     }
-
-    fn plain_poly_mul(
-        &self,
-        BfvPlaintext(Rq(m)): &BfvPlaintext,
-        BfvCiphertext(c): &BfvCiphertext,
-    ) -> BfvCiphertext {
-        let m = Rq(from_fn(|i| {
-            let m = u32::from(m[i]);
-            let m = u128::from(m);
-            Field128::from(m)
-        }));
-        BfvCiphertext(from_fn(|j| &m * &c[j]))
-    }
-
-    fn plain_conv_mul(
-        &self,
-        BfvPlaintext(Rq(m)): &Self::Plaintext,
-        BfvCiphertext(c): &BfvCiphertext,
-    ) -> Self::Ciphertext {
-        let m: [_; 256] = from_fn(|i| {
-            let m = u32::from(m[i]);
-            let m = u128::from(m);
-            Field128::from(m)
-        });
-        BfvCiphertext(from_fn(|j| Rq(from_fn(|i| m[i] * c[j].0[i]))))
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fmt::Debug;
 
-    use prio::field::{FieldPrio2, random_vector};
+    use prio::field::random_vector;
 
     use super::*;
 
@@ -231,7 +225,7 @@ mod tests {
         let want = &s * &m;
 
         let c = bfv.encrypt(&pk, &m);
-        let got = bfv.decrypt(&sk, &bfv.plain_poly_mul(&s, &c));
+        let got = bfv.decrypt(&sk, &(&s * &c));
         assert_eq!(got, want);
     }
 
