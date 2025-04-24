@@ -5,7 +5,7 @@ use std::{
     ops::{Add, Mul},
 };
 
-use crate::poly::Cr;
+use crate::poly::Rq;
 
 pub mod poly;
 
@@ -54,18 +54,18 @@ impl Bfv {
 
 #[derive(Debug, PartialEq)]
 pub struct BfvPlaintext([u64; 256]); // XXX Avoid hardcoding D
-pub struct BfvCiphertext([Cr<Field128, 256>; 2]);
+pub struct BfvCiphertext([Rq<Field128, 256>; 2]);
 
 impl PubEnc for Bfv {
-    type PublicKey = [Cr<Field128, 256>; 2];
-    type SecretKey = Cr<Field128, 256>;
+    type PublicKey = [Rq<Field128, 256>; 2];
+    type SecretKey = Rq<Field128, 256>;
     type Plaintext = BfvPlaintext;
     type Ciphertext = BfvCiphertext;
 
     fn key_gen(&self) -> (Self::PublicKey, Self::SecretKey) {
-        let p1 = Cr::rand_long();
-        let s = Cr::rand_short();
-        let e = Cr::rand_short();
+        let p1 = Rq::rand_long();
+        let s = Rq::rand_short();
+        let e = Rq::rand_short();
         let p0 = -&(&(&p1 * &s) + &e);
         ([p0, p1], s)
     }
@@ -75,12 +75,12 @@ impl PubEnc for Bfv {
         [p0, p1]: &Self::PublicKey,
         BfvPlaintext(m): &Self::Plaintext,
     ) -> Self::Ciphertext {
-        let m = Cr(from_fn(|i| {
+        let m = Rq(from_fn(|i| {
             Field128::from(u128::from(m[i]).checked_mul(self.delta).expect("XXX"))
         }));
-        let u = Cr::rand_short();
-        let e0 = Cr::rand_short();
-        let e1 = Cr::rand_short();
+        let u = Rq::rand_short();
+        let e0 = Rq::rand_short();
+        let e1 = Rq::rand_short();
         let c0 = &(&(p0 * &u) + &e0) + &m;
         let c1 = &(p1 * &u) + &e1;
         BfvCiphertext([c0, c1])
@@ -91,12 +91,13 @@ impl PubEnc for Bfv {
         s: &Self::SecretKey,
         BfvCiphertext([c0, c1]): &Self::Ciphertext,
     ) -> Self::Plaintext {
-        let Cr(m) = c0 + &(c1 * s);
+        let Rq(m) = c0 + &(c1 * s);
         BfvPlaintext(from_fn(|i| {
             let mut m = u128::from(m[i]).to_bigint().unwrap(); // always succeeds on u128
             m *= &self.plaintext_modulus;
             m += &self.ciphertext_modulus >> 1;
             m /= &self.ciphertext_modulus;
+            m %= &self.plaintext_modulus;
             m.try_into().unwrap()
         }))
     }
