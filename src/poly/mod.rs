@@ -1,5 +1,8 @@
 use bitvec::prelude::*;
-use prio::field::{Field128, FieldElement, FieldElementWithInteger, FieldPrio2 as Field32};
+use field64::POLY_MUL_FIELD64;
+use prio::field::{
+    Field64, Field128, FieldElement, FieldElementWithInteger, FieldPrio2 as Field32,
+};
 use rand::prelude::*;
 use std::{
     array::from_fn,
@@ -10,6 +13,7 @@ use crate::poly::{field32::POLY_MUL_FIELD32, field128::POLY_MUL_FIELD128};
 
 mod field128;
 mod field32;
+mod field64;
 
 /// Polynomial ring for the ciphertext.
 ///
@@ -74,6 +78,13 @@ impl Mul for &Rq<Field128, 256> {
     type Output = Rq<Field128, 256>;
     fn mul(self, rhs: Self) -> Self::Output {
         POLY_MUL_FIELD128.poly_mul(self, rhs)
+    }
+}
+
+impl Mul for &Rq<Field64, 256> {
+    type Output = Rq<Field64, 256>;
+    fn mul(self, rhs: Self) -> Self::Output {
+        POLY_MUL_FIELD64.poly_mul(self, rhs)
     }
 }
 
