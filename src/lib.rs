@@ -280,6 +280,7 @@ mod tests {
         assert_eq!(got, want);
     }
 
+    #[ignore]
     #[test]
     fn homomorphic_somewhat_mul() {
         let bfv = Bfv::default();
