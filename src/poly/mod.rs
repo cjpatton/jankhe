@@ -29,6 +29,13 @@ impl<F: FieldElement + FieldElementWithInteger, const D: usize> Rq<F, D> {
         Self([F::zero(); D])
     }
 
+    /// XXX
+    pub fn one() -> Self {
+        let mut x = Self::zero();
+        x.0[0] = F::one();
+        x
+    }
+
     // TODO Implement `Distribution<Rq<F,D>>` for `Standard` instead. This will require changes
     // upstream in `prio`.
     pub(crate) fn rand_long() -> Self {

@@ -24,20 +24,12 @@ where
     for<'a> &'a Self::Plaintext: Add<Output = Self::Plaintext>,
     for<'a> &'a Self::Plaintext: Mul<Output = Self::Plaintext>,
     for<'a> &'a Self::Ciphertext: Add<Output = Self::Ciphertext>,
+    for<'a> &'a Self::Ciphertext: Mul<Output = Self::Ciphertext>,
     for<'a> &'a Self::Ciphertext: Mul<&'a Self::Plaintext, Output = Self::Ciphertext>,
 {
     type RelinerizationKey;
-
-    fn relineraization_key_gen(&self, sk: &Self::SecretKey) -> Self::RelinerizationKey;
-
-    /// Multiply ciphertexts `c1` and `c2` using the relinearization key. The result contains a
-    /// significant amount of error that can only be removed by boostrapping.
-    fn somewhat_mul(
-        &self,
-        rk: &Self::RelinerizationKey,
-        c1: &Self::Ciphertext,
-        c2: &Self::Ciphertext,
-    ) -> Self::Ciphertext;
+    fn relin_key_gen(&self, sk: &Self::SecretKey) -> Self::RelinerizationKey;
+    fn relin(&self, rk: &Self::RelinerizationKey, c: &mut Self::Ciphertext);
 }
 
 #[derive(Clone, Debug)]
@@ -90,17 +82,20 @@ impl PubEnc for Bfv {
         let e1 = Rq::rand_short();
         let c0 = &(&(p0 * &u) + &e0) + &m;
         let c1 = &(p1 * &u) + &e1;
-        BfvCiphertext([c0, c1])
+        BfvCiphertext(vec![c0, c1])
     }
 
-    fn decrypt(
-        &self,
-        s: &Self::SecretKey,
-        BfvCiphertext([c0, c1]): &Self::Ciphertext,
-    ) -> Self::Plaintext {
-        let Rq(m) = c0 + &(c1 * s);
+    fn decrypt(&self, s: &Rq<Field128, 256>, BfvCiphertext(cs): &BfvCiphertext) -> Self::Plaintext {
+        debug_assert!(cs.len() > 1);
+        let mut m: Rq<Field128, 256> = Rq::zero();
+        let mut x = Rq::one();
+        for c in cs {
+            m = &m + &(c * &x);
+            x = &x * s;
+        }
+
         BfvPlaintext(Rq(from_fn(|i| {
-            let mut m = u128::from(m[i]).to_bigint().unwrap(); // always succeeds on u128
+            let mut m = u128::from(m.0[i]).to_bigint().unwrap(); // always succeeds on u128
             m *= &self.plaintext_modulus;
             m += &self.ciphertext_modulus >> 1;
             m /= &self.ciphertext_modulus;
@@ -126,11 +121,11 @@ impl AsRef<[Field32]> for BfvPlaintext {
 }
 
 #[derive(Clone, Debug)]
-pub struct BfvCiphertext([Rq<Field128, 256>; 2]);
+pub struct BfvCiphertext(Vec<Rq<Field128, 256>>);
 
 impl BfvCiphertext {
     pub fn empty() -> Self {
-        Self(from_fn(|_| Rq([Field128::zero(); 256])))
+        Self(vec![Rq([Field128::zero(); 256]); 2])
     }
 }
 
@@ -151,7 +146,15 @@ impl Mul for &BfvPlaintext {
 impl Add for &BfvCiphertext {
     type Output = BfvCiphertext;
     fn add(self, rhs: Self) -> BfvCiphertext {
-        BfvCiphertext(from_fn(|j| &self.0[j] + &rhs.0[j]))
+        let mut out = vec![Rq::zero(); std::cmp::max(self.0.len(), rhs.0.len())];
+        for (o, x) in out.iter_mut().zip(self.0.iter()) {
+            *o = x.clone();
+        }
+        for (j, x) in rhs.0.iter().enumerate() {
+            out[j] = &out[j] + x;
+        }
+
+        BfvCiphertext(out)
     }
 }
 
@@ -163,10 +166,19 @@ impl Mul<&BfvPlaintext> for &BfvCiphertext {
             let m = u128::from(m);
             Field128::from(m)
         }));
-        BfvCiphertext(from_fn(|j| &m * &self.0[j]))
+
+        BfvCiphertext(self.0.iter().map(|x| x * &m).collect())
     }
 }
 
+impl Mul for &BfvCiphertext {
+    type Output = BfvCiphertext;
+    fn mul(self, rhs: &BfvCiphertext) -> BfvCiphertext {
+        todo!()
+    }
+}
+
+/*
 impl Bfv {
     const T: u128 = 64_000_000;
     const SPLITS: usize = 5; // log_T(ciphertext_modulus)
@@ -228,6 +240,7 @@ impl SomewahtHomomorphic for Bfv {
         todo!()
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {
@@ -267,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn homomorphic_plain_poly_mul() {
+    fn homomorphic_plain_mul() {
         let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
 
@@ -280,39 +293,16 @@ mod tests {
         assert_eq!(got, want);
     }
 
-    #[ignore]
     #[test]
     fn homomorphic_somewhat_mul() {
         let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
 
-        let mut m1 = BfvPlaintext(Rq([Field32::from(0); 256]));
-        m1.0.0[0] = Field32::from(1);
-        let mut m2 = BfvPlaintext(Rq([Field32::from(0); 256]));
-        m2.0.0[0] = Field32::from(1_000_000);
+        let m1 = BfvPlaintext(Rq([Field32::from(0); 256]));
+        let m2 = BfvPlaintext(Rq([Field32::from(0); 256]));
 
         let c1 = bfv.encrypt(&pk, &m1);
-        //println!("{c1:?}");
         let c2 = bfv.encrypt(&pk, &m2);
-        //println!("{c2:?}");
-
-        /*
-        let result = bfv.somewhat_mul_unlinearized(&c1, &c2);
-        let mut p = result[0].clone();
-        p = &p + &(&result[1] * &sk);
-        p = &p + &(&result[2] * &(&sk * &sk));
-        let p: [_; 256] = from_fn(|i| {
-            let mut p = u128::from(p.0[i]).to_bigint().unwrap(); // always succeeds on u128
-            p *= &bfv.plaintext_modulus;
-            p += &bfv.ciphertext_modulus >> 1;
-            p /= &bfv.ciphertext_modulus;
-            Field32::from(u32::try_from(p).unwrap())
-        });
-        println!("{p:?}");
-        */
-
-        let rk = bfv.relineraization_key_gen(&sk);
-        println!("{rk:?}");
-        let _got = bfv.decrypt(&sk, &bfv.somewhat_mul(&rk, &c1, &c2));
+        let r = &c1 * &c2;
     }
 }
