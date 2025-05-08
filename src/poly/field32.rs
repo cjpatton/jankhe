@@ -284,53 +284,53 @@ lazy_static! {
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::Rq;
+    use crate::poly::PolyRing;
 
     use super::*;
 
     #[test]
     fn poly_mol_test_field32() {
         {
-            let a = Rq([Field32::from(0); 256]);
-            let b = Rq([Field32::from(0); 256]);
-            let r = Rq([Field32::from(0); 256]);
+            let a = PolyRing([Field32::from(0); 256]);
+            let b = PolyRing([Field32::from(0); 256]);
+            let r = PolyRing([Field32::from(0); 256]);
             assert_eq!(r, POLY_MUL_FIELD32.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field32::from(0); 256]);
+            let mut a = PolyRing([Field32::from(0); 256]);
             a.0[7] = Field32::from(23);
-            let b = Rq([Field32::from(0); 256]);
-            let r = Rq([Field32::from(0); 256]);
+            let b = PolyRing([Field32::from(0); 256]);
+            let r = PolyRing([Field32::from(0); 256]);
             assert_eq!(r, POLY_MUL_FIELD32.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field32::from(0); 256]);
+            let mut a = PolyRing([Field32::from(0); 256]);
             a.0[7] = Field32::from(23);
-            let mut b = Rq([Field32::from(0); 256]);
+            let mut b = PolyRing([Field32::from(0); 256]);
             b.0[0] = Field32::from(1);
-            let mut r = Rq([Field32::from(0); 256]);
+            let mut r = PolyRing([Field32::from(0); 256]);
             r.0[7] = Field32::from(23);
             assert_eq!(r, POLY_MUL_FIELD32.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field32::from(0); 256]);
+            let mut a = PolyRing([Field32::from(0); 256]);
             a.0[7] = Field32::from(23);
-            let mut b = Rq([Field32::from(0); 256]);
+            let mut b = PolyRing([Field32::from(0); 256]);
             b.0[2] = Field32::from(1);
-            let mut r = Rq([Field32::from(0); 256]);
+            let mut r = PolyRing([Field32::from(0); 256]);
             r.0[9] = Field32::from(23);
             assert_eq!(r, POLY_MUL_FIELD32.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field32::from(0); 256]);
+            let mut a = PolyRing([Field32::from(0); 256]);
             a.0[255] = Field32::from(23);
-            let mut b = Rq([Field32::from(0); 256]);
+            let mut b = PolyRing([Field32::from(0); 256]);
             b.0[1] = Field32::from(1);
-            let mut r = Rq([Field32::from(0); 256]);
+            let mut r = PolyRing([Field32::from(0); 256]);
             r.0[0] = -Field32::from(23);
             assert_eq!(r, POLY_MUL_FIELD32.poly_mul(&a, &b));
         }

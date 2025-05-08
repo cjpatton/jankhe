@@ -284,53 +284,53 @@ lazy_static! {
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::Rq;
+    use crate::poly::PolyRing;
 
     use super::*;
 
     #[test]
     fn poly_mol_test_field128() {
         {
-            let a = Rq([Field128::from(0); 256]);
-            let b = Rq([Field128::from(0); 256]);
-            let r = Rq([Field128::from(0); 256]);
+            let a = PolyRing([Field128::from(0); 256]);
+            let b = PolyRing([Field128::from(0); 256]);
+            let r = PolyRing([Field128::from(0); 256]);
             assert_eq!(r, POLY_MUL_FIELD128.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field128::from(0); 256]);
+            let mut a = PolyRing([Field128::from(0); 256]);
             a.0[7] = Field128::from(23);
-            let b = Rq([Field128::from(0); 256]);
-            let r = Rq([Field128::from(0); 256]);
+            let b = PolyRing([Field128::from(0); 256]);
+            let r = PolyRing([Field128::from(0); 256]);
             assert_eq!(r, POLY_MUL_FIELD128.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field128::from(0); 256]);
+            let mut a = PolyRing([Field128::from(0); 256]);
             a.0[7] = Field128::from(23);
-            let mut b = Rq([Field128::from(0); 256]);
+            let mut b = PolyRing([Field128::from(0); 256]);
             b.0[0] = Field128::from(1);
-            let mut r = Rq([Field128::from(0); 256]);
+            let mut r = PolyRing([Field128::from(0); 256]);
             r.0[7] = Field128::from(23);
             assert_eq!(r, POLY_MUL_FIELD128.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field128::from(0); 256]);
+            let mut a = PolyRing([Field128::from(0); 256]);
             a.0[7] = Field128::from(23);
-            let mut b = Rq([Field128::from(0); 256]);
+            let mut b = PolyRing([Field128::from(0); 256]);
             b.0[2] = Field128::from(1);
-            let mut r = Rq([Field128::from(0); 256]);
+            let mut r = PolyRing([Field128::from(0); 256]);
             r.0[9] = Field128::from(23);
             assert_eq!(r, POLY_MUL_FIELD128.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field128::from(0); 256]);
+            let mut a = PolyRing([Field128::from(0); 256]);
             a.0[255] = Field128::from(23);
-            let mut b = Rq([Field128::from(0); 256]);
+            let mut b = PolyRing([Field128::from(0); 256]);
             b.0[1] = Field128::from(1);
-            let mut r = Rq([Field128::from(0); 256]);
+            let mut r = PolyRing([Field128::from(0); 256]);
             r.0[0] = -Field128::from(23);
             assert_eq!(r, POLY_MUL_FIELD128.poly_mul(&a, &b));
         }

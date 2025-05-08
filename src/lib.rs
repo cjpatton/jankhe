@@ -5,7 +5,7 @@ use std::{
     ops::{Add, Mul},
 };
 
-use crate::poly::Rq;
+use crate::poly::PolyRing;
 
 pub mod poly;
 
@@ -28,9 +28,16 @@ where
     for<'a> &'a Self::Ciphertext: Mul<&'a Self::Plaintext, Output = Self::Ciphertext>,
 {
     type RelinerizationKey;
+    // XXX Reusable?
     fn relin_key_gen(&self, sk: &Self::SecretKey) -> Self::RelinerizationKey;
     fn relin(&self, rk: &Self::RelinerizationKey, c: &mut Self::Ciphertext);
 }
+
+/// The ciphertext ring.
+pub type Rq = PolyRing<Field128, 256>;
+
+/// The plaintext ring.
+pub type Rt = PolyRing<Field32, 256>;
 
 #[derive(Clone, Debug)]
 pub struct Bfv {
@@ -53,100 +60,67 @@ impl Default for Bfv {
 
 // Implement Optimization/Assumption 1 from [BFV12].
 impl PubEnc for Bfv {
-    type PublicKey = [Rq<Field128, 256>; 2];
-    type SecretKey = Rq<Field128, 256>;
-    type Plaintext = BfvPlaintext; // XXX remove wrapper
+    type PublicKey = [Rq; 2];
+    type SecretKey = Rq;
+    type Plaintext = Rt;
     type Ciphertext = BfvCiphertext; // XXX remove wrapper
 
     fn key_gen(&self) -> (Self::PublicKey, Self::SecretKey) {
-        let p1 = Rq::rand_long();
-        let s = Rq::rand_short();
-        let e = Rq::rand_short();
+        let p1 = PolyRing::rand_long();
+        let s = PolyRing::rand_short();
+        let e = PolyRing::rand_short();
         let p0 = -&(&(&p1 * &s) + &e);
         ([p0, p1], s)
     }
 
-    fn encrypt(
-        &self,
-        [p0, p1]: &Self::PublicKey,
-        BfvPlaintext(Rq(m)): &Self::Plaintext,
-    ) -> Self::Ciphertext {
-        let m = Rq(from_fn(|i| {
+    fn encrypt(&self, [p0, p1]: &Self::PublicKey, PolyRing(m): &Rt) -> Self::Ciphertext {
+        let m = PolyRing(from_fn(|i| {
             let m = u32::from(m[i]);
             let m = u128::from(m);
             let m = Field128::from(m);
             m * self.delta
         }));
-        let u = Rq::rand_short();
-        let e0 = Rq::rand_short();
-        let e1 = Rq::rand_short();
+        let u = PolyRing::rand_short();
+        let e0 = PolyRing::rand_short();
+        let e1 = PolyRing::rand_short();
         let c0 = &(&(p0 * &u) + &e0) + &m;
         let c1 = &(p1 * &u) + &e1;
         BfvCiphertext(vec![c0, c1])
     }
 
-    fn decrypt(&self, s: &Rq<Field128, 256>, BfvCiphertext(cs): &BfvCiphertext) -> Self::Plaintext {
+    fn decrypt(&self, s: &Rq, BfvCiphertext(cs): &BfvCiphertext) -> Rt {
         debug_assert!(cs.len() > 1);
-        let mut m: Rq<Field128, 256> = Rq::zero();
-        let mut x = Rq::one();
+        let mut m: Rq = PolyRing::zero();
+        let mut x = PolyRing::one();
         for c in cs {
             m = &m + &(c * &x);
             x = &x * s;
         }
 
-        BfvPlaintext(Rq(from_fn(|i| {
+        PolyRing(from_fn(|i| {
             let mut m = u128::from(m.0[i]).to_bigint().unwrap(); // always succeeds on u128
             m *= &self.plaintext_modulus;
             m += &self.ciphertext_modulus >> 1;
             m /= &self.ciphertext_modulus;
             let m = u32::try_from(m).unwrap();
             Field32::from(m)
-        })))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct BfvPlaintext(Rq<Field32, 256>); // XXX Avoid hardcoding D
-
-impl From<[Field32; 256]> for BfvPlaintext {
-    fn from(value: [Field32; 256]) -> Self {
-        Self(Rq(value))
-    }
-}
-
-impl AsRef<[Field32]> for BfvPlaintext {
-    fn as_ref(&self) -> &[Field32] {
-        self.0.0.as_ref()
+        }))
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct BfvCiphertext(Vec<Rq<Field128, 256>>);
+pub struct BfvCiphertext(Vec<Rq>);
 
 impl BfvCiphertext {
     pub fn empty() -> Self {
-        Self(vec![Rq([Field128::zero(); 256]); 2])
-    }
-}
-
-impl Add for &BfvPlaintext {
-    type Output = BfvPlaintext;
-    fn add(self, rhs: Self) -> BfvPlaintext {
-        BfvPlaintext(&self.0 + &rhs.0)
-    }
-}
-
-impl Mul for &BfvPlaintext {
-    type Output = BfvPlaintext;
-    fn mul(self, rhs: Self) -> BfvPlaintext {
-        BfvPlaintext(&self.0 * &rhs.0)
+        Self(vec![PolyRing([Field128::zero(); 256]); 2])
     }
 }
 
 impl Add for &BfvCiphertext {
     type Output = BfvCiphertext;
     fn add(self, rhs: Self) -> BfvCiphertext {
-        let mut out = vec![Rq::zero(); std::cmp::max(self.0.len(), rhs.0.len())];
+        let mut out = vec![PolyRing::zero(); std::cmp::max(self.0.len(), rhs.0.len())];
         for (o, x) in out.iter_mut().zip(self.0.iter()) {
             *o = x.clone();
         }
@@ -158,10 +132,10 @@ impl Add for &BfvCiphertext {
     }
 }
 
-impl Mul<&BfvPlaintext> for &BfvCiphertext {
+impl Mul<&Rt> for &BfvCiphertext {
     type Output = BfvCiphertext;
-    fn mul(self, BfvPlaintext(Rq(m)): &BfvPlaintext) -> BfvCiphertext {
-        let m = Rq(from_fn(|i| {
+    fn mul(self, PolyRing(m): &Rt) -> BfvCiphertext {
+        let m = PolyRing(from_fn(|i| {
             let m = u32::from(m[i]);
             let m = u128::from(m);
             Field128::from(m)
@@ -187,14 +161,14 @@ impl Bfv {
         &self,
         BfvCiphertext(x1): &BfvCiphertext,
         BfvCiphertext(x2): &BfvCiphertext,
-    ) -> [Rq<Field128, 256>; 3] {
+    ) -> [Rq; 3] {
         let y = [
             &x1[0] * &x2[0],
             &(&x1[0] * &x2[1]) + &(&x1[1] * &x2[0]),
             &x1[1] * &x2[1],
         ];
         from_fn(|j| {
-            Rq(from_fn(|i| {
+            PolyRing(from_fn(|i| {
                 let mut y = u128::from(y[j].0[i]).to_bigint().unwrap(); // always succeeds on u128
                 y *= &self.plaintext_modulus;
                 y += &self.ciphertext_modulus >> 1;
@@ -210,18 +184,18 @@ impl Bfv {
 // assumptions. However, this version seems easier to implement. For now we just want to see if the
 // somewhat homomorphic multiplication is good enough for our purposes.
 impl SomewahtHomomorphic for Bfv {
-    type RelinerizationKey = [[Rq<Field128, 256>; 2]; Bfv::SPLITS];
+    type RelinerizationKey = [[Rq; 2]; Bfv::SPLITS];
 
     fn relineraization_key_gen(
         &self,
-        s: &Rq<Field128, 256>,
-    ) -> [[Rq<Field128, 256>; 2]; Bfv::SPLITS] {
+        s: &Rq,
+    ) -> [[Rq; 2]; Bfv::SPLITS] {
         let s_squared = s * s;
         let t = Field128::from(Bfv::T);
         let mut t_power = Field128::from(0);
         from_fn(|_| {
-            let a = Rq::rand_long();
-            let e = Rq::rand_short();
+            let a = PolyRing::rand_long();
+            let e = PolyRing::rand_short();
             let mut r0 = &(&a * s) + &e;
             r0 = -&r0;
             r0 = &r0 + &(&s_squared * t_power);
@@ -232,7 +206,7 @@ impl SomewahtHomomorphic for Bfv {
 
     fn somewhat_mul(
         &self,
-        _rk: &[[Rq<Field128, 256>; 2]; Bfv::SPLITS],
+        _rk: &[[Rq; 2]; Bfv::SPLITS],
         x1: &BfvCiphertext,
         x2: &BfvCiphertext,
     ) -> BfvCiphertext {
@@ -260,7 +234,7 @@ mod tests {
     #[test]
     fn test_pub_enc() {
         let bfv = Bfv::default();
-        let m = BfvPlaintext(Rq::rand_long());
+        let m = Rt::rand_long();
         roundtrip_test(&bfv, &m);
     }
 
@@ -269,8 +243,8 @@ mod tests {
         let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
 
-        let m1 = BfvPlaintext(Rq::rand_long());
-        let m2 = BfvPlaintext(Rq::rand_long());
+        let m1 = Rt::rand_long();
+        let m2 = Rt::rand_long();
         let want = &m1 + &m2;
 
         let c1 = bfv.encrypt(&pk, &m1);
@@ -284,8 +258,8 @@ mod tests {
         let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
 
-        let s = BfvPlaintext(Rq::rand_long());
-        let m = BfvPlaintext(Rq::rand_long());
+        let s = Rt::rand_long();
+        let m = Rt::rand_long();
         let want = &s * &m;
 
         let c = bfv.encrypt(&pk, &m);
@@ -298,8 +272,8 @@ mod tests {
         let bfv = Bfv::default();
         let (pk, sk) = bfv.key_gen();
 
-        let m1 = BfvPlaintext(Rq([Field32::from(0); 256]));
-        let m2 = BfvPlaintext(Rq([Field32::from(0); 256]));
+        let m1 = PolyRing([Field32::from(0); 256]);
+        let m2 = PolyRing([Field32::from(0); 256]);
 
         let c1 = bfv.encrypt(&pk, &m1);
         let c2 = bfv.encrypt(&pk, &m2);

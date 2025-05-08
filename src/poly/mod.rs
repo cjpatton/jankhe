@@ -21,9 +21,9 @@ mod field64;
 /// size of the plaintext modulus. It also allows the user to choose the modulus themselves. For
 /// now, we're hardcoding a prime modulus for which we know how to implement NTT.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Rq<F: FieldElement, const D: usize>(pub(crate) [F; D]);
+pub struct PolyRing<F: FieldElement, const D: usize>(pub(crate) [F; D]);
 
-impl<F: FieldElement + FieldElementWithInteger, const D: usize> Rq<F, D> {
+impl<F: FieldElement + FieldElementWithInteger, const D: usize> PolyRing<F, D> {
     /// Return a polynomial with all-zero coefficients.
     pub fn zero() -> Self {
         Self([F::zero(); D])
@@ -36,7 +36,7 @@ impl<F: FieldElement + FieldElementWithInteger, const D: usize> Rq<F, D> {
         x
     }
 
-    // TODO Implement `Distribution<Rq<F,D>>` for `Standard` instead. This will require changes
+    // TODO Implement `Distribution<PolyRing<F,D>>` for `Standard` instead. This will require changes
     // upstream in `prio`.
     pub(crate) fn rand_long() -> Self {
         Self(prio::field::random_vector(D).try_into().unwrap())
@@ -67,45 +67,45 @@ impl<F: FieldElement + FieldElementWithInteger, const D: usize> Rq<F, D> {
     }
 }
 
-impl<F: FieldElement, const D: usize> Add for &Rq<F, D> {
-    type Output = Rq<F, D>;
+impl<F: FieldElement, const D: usize> Add for &PolyRing<F, D> {
+    type Output = PolyRing<F, D>;
     fn add(self, rhs: Self) -> Self::Output {
-        Rq(from_fn(|i| self.0[i] + rhs.0[i]))
+        PolyRing(from_fn(|i| self.0[i] + rhs.0[i]))
     }
 }
 
-impl<F: FieldElement, const D: usize> Mul<F> for &Rq<F, D> {
-    type Output = Rq<F, D>;
-    fn mul(self, rhs: F) -> Rq<F, D> {
-        Rq(from_fn(|i| self.0[i] * rhs))
+impl<F: FieldElement, const D: usize> Mul<F> for &PolyRing<F, D> {
+    type Output = PolyRing<F, D>;
+    fn mul(self, rhs: F) -> PolyRing<F, D> {
+        PolyRing(from_fn(|i| self.0[i] * rhs))
     }
 }
 
-impl Mul for &Rq<Field128, 256> {
-    type Output = Rq<Field128, 256>;
+impl Mul for &PolyRing<Field128, 256> {
+    type Output = PolyRing<Field128, 256>;
     fn mul(self, rhs: Self) -> Self::Output {
         POLY_MUL_FIELD128.poly_mul(self, rhs)
     }
 }
 
-impl Mul for &Rq<Field64, 256> {
-    type Output = Rq<Field64, 256>;
+impl Mul for &PolyRing<Field64, 256> {
+    type Output = PolyRing<Field64, 256>;
     fn mul(self, rhs: Self) -> Self::Output {
         POLY_MUL_FIELD64.poly_mul(self, rhs)
     }
 }
 
-impl Mul for &Rq<Field32, 256> {
-    type Output = Rq<Field32, 256>;
+impl Mul for &PolyRing<Field32, 256> {
+    type Output = PolyRing<Field32, 256>;
     fn mul(self, rhs: Self) -> Self::Output {
         POLY_MUL_FIELD32.poly_mul(self, rhs)
     }
 }
 
-impl<F: FieldElement, const D: usize> Neg for &Rq<F, D> {
-    type Output = Rq<F, D>;
+impl<F: FieldElement, const D: usize> Neg for &PolyRing<F, D> {
+    type Output = PolyRing<F, D>;
     fn neg(self) -> Self::Output {
-        Rq(from_fn(|i| -self.0[i]))
+        PolyRing(from_fn(|i| -self.0[i]))
     }
 }
 
@@ -119,7 +119,11 @@ pub(crate) struct NttParamD256<F: FieldElement> {
 
 impl<F: FieldElement> NttParamD256<F> {
     /// Multiply two polynomials `a` and `b` from `F[X]/(X^256 + 1)`.
-    fn poly_mul(&self, Rq(a): &Rq<F, 256>, Rq(b): &Rq<F, 256>) -> Rq<F, 256> {
+    fn poly_mul(
+        &self,
+        PolyRing(a): &PolyRing<F, 256>,
+        PolyRing(b): &PolyRing<F, 256>,
+    ) -> PolyRing<F, 256> {
         fn level<F>(t: &[F], i: usize) -> &[F] {
             let level_start = (1 << i) - 1;
             let level_len = 1 << i;
@@ -192,7 +196,7 @@ impl<F: FieldElement> NttParamD256<F> {
             ntt_a[p][i] *= self.c;
         }
 
-        Rq(ntt_a[p])
+        PolyRing(ntt_a[p])
     }
 }
 

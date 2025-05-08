@@ -284,53 +284,53 @@ lazy_static! {
 
 #[cfg(test)]
 mod tests {
-    use crate::poly::Rq;
+    use crate::poly::PolyRing;
 
     use super::*;
 
     #[test]
     fn poly_mol_test_field64() {
         {
-            let a = Rq([Field64::from(0); 256]);
-            let b = Rq([Field64::from(0); 256]);
-            let r = Rq([Field64::from(0); 256]);
+            let a = PolyRing([Field64::from(0); 256]);
+            let b = PolyRing([Field64::from(0); 256]);
+            let r = PolyRing([Field64::from(0); 256]);
             assert_eq!(r, POLY_MUL_FIELD64.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field64::from(0); 256]);
+            let mut a = PolyRing([Field64::from(0); 256]);
             a.0[7] = Field64::from(23);
-            let b = Rq([Field64::from(0); 256]);
-            let r = Rq([Field64::from(0); 256]);
+            let b = PolyRing([Field64::from(0); 256]);
+            let r = PolyRing([Field64::from(0); 256]);
             assert_eq!(r, POLY_MUL_FIELD64.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field64::from(0); 256]);
+            let mut a = PolyRing([Field64::from(0); 256]);
             a.0[7] = Field64::from(23);
-            let mut b = Rq([Field64::from(0); 256]);
+            let mut b = PolyRing([Field64::from(0); 256]);
             b.0[0] = Field64::from(1);
-            let mut r = Rq([Field64::from(0); 256]);
+            let mut r = PolyRing([Field64::from(0); 256]);
             r.0[7] = Field64::from(23);
             assert_eq!(r, POLY_MUL_FIELD64.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field64::from(0); 256]);
+            let mut a = PolyRing([Field64::from(0); 256]);
             a.0[7] = Field64::from(23);
-            let mut b = Rq([Field64::from(0); 256]);
+            let mut b = PolyRing([Field64::from(0); 256]);
             b.0[2] = Field64::from(1);
-            let mut r = Rq([Field64::from(0); 256]);
+            let mut r = PolyRing([Field64::from(0); 256]);
             r.0[9] = Field64::from(23);
             assert_eq!(r, POLY_MUL_FIELD64.poly_mul(&a, &b));
         }
 
         {
-            let mut a = Rq([Field64::from(0); 256]);
+            let mut a = PolyRing([Field64::from(0); 256]);
             a.0[255] = Field64::from(23);
-            let mut b = Rq([Field64::from(0); 256]);
+            let mut b = PolyRing([Field64::from(0); 256]);
             b.0[1] = Field64::from(1);
-            let mut r = Rq([Field64::from(0); 256]);
+            let mut r = PolyRing([Field64::from(0); 256]);
             r.0[0] = -Field64::from(23);
             assert_eq!(r, POLY_MUL_FIELD64.poly_mul(&a, &b));
         }
