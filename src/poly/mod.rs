@@ -1,11 +1,13 @@
 use bitvec::prelude::*;
 use field64::POLY_MUL_FIELD64;
+use num_bigint::{BigInt, ToBigInt, ToBigUint};
 use prio::field::{
     Field64, Field128, FieldElement, FieldElementWithInteger, FieldPrio2 as Field32,
 };
 use rand::prelude::*;
 use std::{
     array::from_fn,
+    fmt::Debug,
     ops::{Add, Mul, Neg},
 };
 
@@ -23,7 +25,11 @@ mod field64;
 #[derive(Clone, Debug, PartialEq)]
 pub struct PolyRing<F: FieldElement, const D: usize>(pub(crate) [F; D]);
 
-impl<F: FieldElement + FieldElementWithInteger, const D: usize> PolyRing<F, D> {
+impl<F, const D: usize> PolyRing<F, D>
+where
+    F: FieldElement + FieldElementWithInteger,
+    F::Integer: ToBigInt,
+{
     /// Return a polynomial with all-zero coefficients.
     pub fn zero() -> Self {
         Self([F::zero(); D])
@@ -34,6 +40,10 @@ impl<F: FieldElement + FieldElementWithInteger, const D: usize> PolyRing<F, D> {
         let mut x = Self::zero();
         x.0[0] = F::one();
         x
+    }
+
+    pub(crate) fn to_bigints(&self) -> [BigInt; D] {
+        from_fn(|i| F::Integer::from(self.0[i]).to_bigint().unwrap())
     }
 
     // TODO Implement `Distribution<PolyRing<F,D>>` for `Standard` instead. This will require changes
@@ -205,8 +215,12 @@ impl<F: FieldElement> NttParamD256<F> {
 /// This is the algorithm described in Section 4.1.1 of [Lyu24]. Matrix `m` is the transpose
 /// of the matrix on the left hand side of Equation (43).
 fn slow_poly_mul<F: FieldElement, const D: usize>(mut a: [F; D], b: [F; D], r: F) -> [F; D] {
-    let m: Mat<F, D, D> = Mat(from_fn(|_| {
-        let row = a;
+    let mut out = [F::zero(); D];
+
+    for i in 0..D {
+        for j in 0..D {
+            out[j] += b[i] * a[j];
+        }
 
         // Multiply `a` by `X` and reduce.
         //
@@ -220,31 +234,39 @@ fn slow_poly_mul<F: FieldElement, const D: usize>(mut a: [F; D], b: [F; D], r: F
 
         // Clear the first coefficient of `a` to complete the shift and subtract `c * F(X)` from `a`.
         a[0] = r * -c;
+    }
 
-        row
-    }));
-
-    (&Mat([b]) * &m).0[0]
+    out
 }
 
-struct Mat<F, const ROWS: usize, const COLS: usize>([[F; COLS]; ROWS]);
+/// XXX
+pub(crate) fn slow_poly_mul_bigint<const D: usize>(
+    mut a: [BigInt; D],
+    b: &[BigInt; D],
+    r: &BigInt,
+) -> [BigInt; D] {
+    let mut out = [BigInt::ZERO; D];
 
-#[allow(clippy::needless_range_loop)]
-impl<F: FieldElement, const I: usize, const J: usize, const K: usize> Mul<&Mat<F, J, K>>
-    for &Mat<F, I, J>
-{
-    type Output = Mat<F, I, K>;
-    fn mul(self, rhs: &Mat<F, J, K>) -> Mat<F, I, K> {
-        let mut out = [[F::zero(); K]; I];
-        for i in 0..I {
-            for j in 0..J {
-                for k in 0..K {
-                    out[i][k] += self.0[i][j] * rhs.0[j][k];
-                }
-            }
+    for i in 0..D {
+        for j in 0..D {
+            out[j] += &b[i] * &a[j];
         }
-        Mat(out)
+
+        // Multiply `a` by `X` and reduce.
+        //
+        // Let `c` be the leading coefficient of `a`.
+        let c = a[D - 1].clone();
+
+        // Multiply `a` by `X` in place by shifting everything over.
+        for j in (1..D).rev() {
+            a[j] = a[j - 1].clone();
+        }
+
+        // Clear the first coefficient of `a` to complete the shift and subtract `c * F(X)` from `a`.
+        a[0] = r * &(-c);
     }
+
+    out
 }
 
 #[cfg(test)]
@@ -306,5 +328,53 @@ mod tests {
                 Field128::from(2),
             )
         );
+    }
+
+    #[test]
+    fn test_slow_poly_mul_bigint() {
+        let mut rng = thread_rng();
+        let a: [u128; 256] = from_fn(|_| rng.gen_range(0..u128::MAX));
+        let b: [u128; 256] = from_fn(|_| rng.gen_range(0..u128::MAX));
+
+        let got: [_; 256] = slow_poly_mul_bigint::<256>(
+            a.iter()
+                .map(|x| x.to_bigint().unwrap())
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            &b.iter()
+                .map(|x| x.to_bigint().unwrap())
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            &1.to_bigint().unwrap(),
+        )
+        .into_iter()
+        .map(|mut x| {
+            x %= Field128::modulus();
+            if x < BigInt::ZERO {
+                x += Field128::modulus();
+            }
+            Field128::from(u128::try_from(x).unwrap())
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+
+        let want: [_; 256] = slow_poly_mul(
+            a.into_iter()
+                .map(Field128::from)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            b.into_iter()
+                .map(Field128::from)
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+            Field128::one(),
+        );
+
+        assert_eq!(got, want);
     }
 }
