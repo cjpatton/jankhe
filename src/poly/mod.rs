@@ -1,6 +1,6 @@
 use bitvec::prelude::*;
 use field64::POLY_MUL_FIELD64;
-use num_bigint::{BigInt, ToBigInt, ToBigUint};
+use num_bigint::{BigInt, ToBigInt};
 use prio::field::{
     Field64, Field128, FieldElement, FieldElementWithInteger, FieldPrio2 as Field32,
 };
@@ -217,9 +217,9 @@ impl<F: FieldElement> NttParamD256<F> {
 fn slow_poly_mul<F: FieldElement, const D: usize>(mut a: [F; D], b: [F; D], r: F) -> [F; D] {
     let mut out = [F::zero(); D];
 
-    for i in 0..D {
+    for b_coeff in b.into_iter() {
         for j in 0..D {
-            out[j] += b[i] * a[j];
+            out[j] += b_coeff * a[j];
         }
 
         // Multiply `a` by `X` and reduce.
@@ -247,9 +247,9 @@ pub(crate) fn slow_poly_mul_bigint<const D: usize>(
 ) -> [BigInt; D] {
     let mut out = [BigInt::ZERO; D];
 
-    for i in 0..D {
+    for b_coeff in b.iter() {
         for j in 0..D {
-            out[j] += &b[i] * &a[j];
+            out[j] += b_coeff * &a[j];
         }
 
         // Multiply `a` by `X` and reduce.
