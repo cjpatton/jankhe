@@ -18,7 +18,6 @@ where
     for<'a> &'a Self::Ciphertext: Mul<&'a Self::Plaintext, Output = Self::Ciphertext>,
 {
     type RelinKey;
-    // XXX Reusable?
     fn relin_key_gen(&self, sk: &Self::SecretKey) -> Self::RelinKey;
     fn relin(&self, rk: &Self::RelinKey, c: &mut Self::Ciphertext);
     fn mul(&self, c1: &Self::Ciphertext, c2: &Self::Ciphertext) -> Self::Ciphertext;

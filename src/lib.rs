@@ -1,4 +1,5 @@
 pub mod bfv;
+pub mod bgv;
 pub mod poly;
 
 pub trait PubEnc {

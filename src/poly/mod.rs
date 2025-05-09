@@ -8,7 +8,7 @@ use rand::prelude::*;
 use std::{
     array::from_fn,
     fmt::Debug,
-    ops::{Add, Mul, Neg},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Range, RangeTo},
 };
 
 use crate::poly::{field32::POLY_MUL_FIELD32, field128::POLY_MUL_FIELD128};
@@ -52,6 +52,22 @@ where
         Self(prio::field::random_vector(D).try_into().unwrap())
     }
 
+    pub(crate) fn secret() -> Self {
+        let mut rng = thread_rng();
+        let two = F::from(F::Integer::try_from(2).unwrap());
+        Self(from_fn(|_| {
+            let bit = F::from(F::Integer::try_from(rng.gen_range(0..2)).unwrap());
+            F::one() - bit * two
+        }))
+    }
+
+    pub(crate) fn rand_range(range: Range<usize>) -> Self {
+        let mut rng = thread_rng();
+        Self(from_fn(|_| {
+            F::from(F::Integer::try_from(rng.gen_range(range.clone())).unwrap())
+        }))
+    }
+
     /// Sample a polynomial with binomially distributed coefficients.
     //
     // TODO Pass an `Rng` here.
@@ -84,10 +100,32 @@ impl<F: FieldElement, const D: usize> Add for &PolyRing<F, D> {
     }
 }
 
+impl<F: FieldElement, const D: usize> AddAssign<&PolyRing<F, D>> for PolyRing<F, D> {
+    fn add_assign(&mut self, rhs: &PolyRing<F, D>) {
+        for (x, y) in self.0.iter_mut().zip(rhs.0.iter()) {
+            *x += *y;
+        }
+    }
+}
+
 impl<F: FieldElement, const D: usize> Mul<F> for &PolyRing<F, D> {
     type Output = PolyRing<F, D>;
     fn mul(self, rhs: F) -> PolyRing<F, D> {
         PolyRing(from_fn(|i| self.0[i] * rhs))
+    }
+}
+
+impl<F: FieldElement, const D: usize> MulAssign<F> for PolyRing<F, D> {
+    fn mul_assign(&mut self, rhs: F) {
+        for x in self.0.iter_mut() {
+            *x *= rhs;
+        }
+    }
+}
+
+impl MulAssign<&PolyRing<Field128, 256>> for PolyRing<Field128, 256> {
+    fn mul_assign(&mut self, rhs: &PolyRing<Field128, 256>) {
+        *self = POLY_MUL_FIELD128.poly_mul(self, rhs)
     }
 }
 
